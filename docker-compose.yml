@@ -1,0 +1,17 @@
+version: "3"
+services:
+  db:
+   image: postgres:10
+   container_name: db
+   hostname: db
+   restart: always
+   ports:
+#    - ${POSTGRES_PORT:-5432}:5432
+     - 0.0.0.0:5432:5432
+   volumes:
+     - ./data/db:/var/lib/postgresql/data
+   environment:
+     - POSTGRES_HOST=db
+     - POSTGRES_DB=dev
+     - POSTGRES_USER=admin
+     - POSTGRES_PASSWORD=secret

@@ -1,7 +1,163 @@
 ---
-- name: case1
-  hosts: case1
+- hosts: case1
+  gather_facts: no
+  #vars_prompt:
+  #  - name: site_name
+  #    prompt: What is your site name?
+  #    private: no
   tasks:
-  - name: install_mc
-    apt: 
-      name: "mc"
+
+#  - name: upgrade all apt packages
+#    apt: upgrade=dist
+
+  - name: install dependencies
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+      - gnupg-agent
+
+  - name: add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+      state: present
+
+  - name: install docker
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+
+  - name: add user to docker group
+    user:
+      name: "{{ ansible_user }}"
+      group: docker
+
+  - name: download docker-compose {{ docker_compose_version }}
+    get_url:
+      url : https://github.com/docker/compose/releases/download/1.27.4/docker-compose-Linux-x86_64
+      dest: ~/docker-compose
+      mode: '+x'
+
+  - name: check docker-compose exists
+    stat: path=~/docker-compose
+    register: docker_compose
+
+  - name: move docker-compose to /usr/local/bin/docker-compose
+    command: mv ~/docker-compose /usr/local/bin/docker-compose
+    when: docker_compose.stat.exists
+
+  - name: move_database
+    copy:
+      src: ./docker-compose.yml
+      dest: /root/docker-compose.yml
+    when: inventory_hostname == "db"
+
+  - name: database_run
+    shell: docker-compose up -d --build
+    when: inventory_hostname == "db"
+
+  - name: application_load
+    shell: docker load < /opt/responding-app.tar
+    when: "'web' in inventory_hostname"
+
+  - name: application_run
+    shell: docker run -d --publish 5000:5000 --restart always responding-app --ad_ip_addr 200.100.100.123 --db_conn_string postgresql://admin:secret@200.100.100.50:5432/dev --external_link http://yandex.ru
+    when: "'web' in inventory_hostname"
+
+  - name: Ensure_directory_exists
+    file:
+      path: /opt/ca
+      state: directory
+    when: "'web' in inventory_hostname"
+
+  - name: generate an openssl private key
+    openssl_privatekey:
+      path: /opt/ca/cakey.pem
+    when: "'web' in inventory_hostname"
+
+  - name: generate an openssl CSR
+    openssl_csr:
+      path: /opt/ca/ca.csr
+      privatekey_path: /opt/ca/cakey.pem
+      common_name: "site.unakbars.ru"
+    when: "'web' in inventory_hostname"
+
+  - name: generate a self signed openssl certificate
+    openssl_certificate:
+      path: /opt/ca/cacert.pem
+      privatekey_path: /opt/ca/cakey.pem
+      csr_path: /opt/ca/ca.csr
+      provider: selfsigned
+    when: "'web' in inventory_hostname"
+
+  - name: ensure_nginx_is_at_the_latest_version
+    apt: name=nginx state=latest
+    when: "'web' in inventory_hostname"
+
+  - name: start nginx
+    service:
+      name: nginx
+      state: started
+    when: "'web' in inventory_hostname"
+
+  - name: copy_file
+    template:
+      src: ./task.conf
+      dest: /etc/nginx/conf.d/task.conf
+    when: "'web' in inventory_hostname"
+
+  - name: copy_file
+    template:
+      src: ./.htpasswd
+      dest: /etc/nginx/.htpasswd
+    when: "'web' in inventory_hostname"
+    
+  - name: reboot_nginx
+    service:
+      name: nginx
+      state: restarted
+    when: "'web' in inventory_hostname"
+
+  - name: install_chrony
+    apt:
+      name: chrony
+      state: latest
+
+  - name: set_chrony_config
+    copy:
+      src: ./chrony.conf
+      dest: /etc/chrony/chrony.conf
+
+  - name: enable_chrony
+    systemd:
+      name: chrony.service
+      state: started
+      enabled: yes 
+
+  - name: set_timezone
+    shell: timedatectl set-timezone Europe/Moscow 
+    
+  - name: restart_chrony
+    systemd:
+      name: chrony.service
+      state: restarted
+  
+     
+  
